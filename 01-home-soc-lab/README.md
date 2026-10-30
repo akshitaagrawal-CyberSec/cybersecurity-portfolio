@@ -87,6 +87,4 @@ After a re-scan, those four checks passed (127 passed, 346 failed).
 - Finding something is only half the job. The CIS check helped me fix the actual cause.
 - Small infrastructure problems, like a wrong clock or a dropped network connection, can quietly break an investigation.
 
-## What's next
 
-An Active Directory lab, where I'll look at detecting password spraying and Kerberoasting, and writing my own Wazuh rules.
