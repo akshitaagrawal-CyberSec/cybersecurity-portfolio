@@ -87,36 +87,6 @@ After a re-scan, those four checks passed (127 passed, 346 failed).
 - Finding something is only half the job. The CIS check helped me fix the actual cause.
 - Small infrastructure problems, like a wrong clock or a dropped network connection, can quietly break an investigation.
 
-## Screenshots
-
-**Windows agent connected to Wazuh**
-
-![Wazuh dashboard with active agent](screenshots/01-dashboard-agent-active.png)
-
-**Failed login alerts (Event ID 4625, rule 60122)**
-
-![Failed login alerts](screenshots/02-failed-logins-60122.png)
-
-![Alert details: target user and substatus](screenshots/04-failed-login-substatus.png)
-
-![Alert details: MITRE and compliance mapping](screenshots/03-failed-login-mitre-details.png)
-
-**File Integrity Monitoring: file added, modified and deleted**
-
-![FIM alerts](screenshots/05-fim-added-modified-deleted.png)
-
-![FIM hash change on modification](screenshots/06-fim-hash-change.png)
-
-**CIS benchmark results (before remediation)**
-
-![CIS benchmark score](screenshots/07-cis-benchmark-score.png)
-
-**Sysmon file-creation alerts I investigated (rule 92217)**
-
-![Sysmon 92217 alerts](screenshots/08-sysmon-92217-alerts.png)
-
-![Sysmon 92217 alert details](screenshots/09-sysmon-92217-details.png)
-
 ## What's next
 
 An Active Directory lab, where I'll look at detecting password spraying and Kerberoasting, and writing my own Wazuh rules.
