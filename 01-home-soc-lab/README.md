@@ -1,98 +1,122 @@
-# Home SOC Lab: Wazuh SIEM + Sysmon
+# Home SOC Lab with Wazuh and Sysmon
 
-A home Security Operations Center lab built to practice SIEM deployment, endpoint logging, alert triage, investigation and hardening, following the same workflow a Tier 1 SOC analyst uses.
+I built this lab to get real hands-on time with a SIEM before applying for SOC analyst roles. Reading about alerts is one thing, but I wanted to actually generate activity on a Windows machine, watch it show up in a SIEM, and figure out what happened from the logs.
 
-## Goal
-Deploy an open-source SIEM, forward detailed Windows endpoint telemetry to it, generate security-relevant activity, then detect, investigate and map that activity to MITRE ATT&CK, and remediate the root cause.
+## What's in the lab
 
-## Lab Architecture
+Everything runs in VMware Workstation on my laptop, on a NAT network so the lab stays separate from my home network.
+
+- **Wazuh server:** Ubuntu Server 24.04 running Wazuh 4.14 (all-in-one install: indexer, manager and dashboard). 8 GB RAM, 2 vCPUs.
+- **Windows endpoint:** Windows 11 Enterprise (evaluation) with Sysmon and the Wazuh agent installed. 6 GB RAM, 2 vCPUs.
+
+The Windows VM sends its Security, System and Sysmon logs to the Wazuh server, and I use the Wazuh dashboard to search and investigate alerts.
 
 ```
-Windows 11 endpoint (Sysmon + Wazuh agent)  --logs-->  Wazuh SIEM on Ubuntu Server  -->  Wazuh Dashboard
-        192.168.85.134                                        192.168.85.133
+Windows 11 (Sysmon + Wazuh agent)  -->  Wazuh server (Ubuntu)  -->  Dashboard
+     192.168.85.134                        192.168.85.133
 ```
 
-| Component | Details |
-|---|---|
-| Hypervisor | VMware Workstation Pro, isolated NAT network |
-| SIEM server | Ubuntu Server 24.04 LTS, Wazuh 4.14 all-in-one (indexer, manager, dashboard), 8 GB RAM, 2 vCPU |
-| Endpoint | Windows 11 Enterprise (evaluation), 6 GB RAM, 2 vCPU, virtual TPM |
-| Endpoint telemetry | Sysmon (SwiftOnSecurity config) + Windows Security/System event logs |
+## Setting it up
 
-## Tools
-Wazuh · Sysmon · VMware Workstation · Ubuntu Server · Windows 11 · PowerShell · Bash · SSH · MITRE ATT&CK · CIS Benchmarks
+A few things I did during setup that turned out to matter:
 
-## Setup
-- Verified the Ubuntu ISO with SHA-256 before installing.
-- Expanded the LVM root volume from 24 GB to 48 GB so the Wazuh indexer has room for log storage.
-- Managed the server remotely over SSH.
-- Deployed Wazuh all-in-one and confirmed the indexer, manager, Filebeat and dashboard services.
-- Installed Sysmon on Windows and deployed the Wazuh agent.
-- Configured the agent to collect the `Microsoft-Windows-Sysmon/Operational` channel and verified collection in the agent log.
-- Took VM snapshots at each milestone for repeatable testing.
+- Checked the Ubuntu ISO's SHA-256 hash against the official one before installing.
+- The Ubuntu installer only gave the root volume about 24 GB of my 50 GB disk, so I extended the LVM volume to use all of it. Wazuh's indexer needs that space for logs.
+- Managed the server over SSH from my laptop instead of typing into the VM console.
+- Installed Sysmon with the SwiftOnSecurity config, then added the Sysmon event channel to the Wazuh agent's `ossec.conf`. Out of the box, the agent doesn't collect Sysmon logs.
+- Took snapshots after each milestone so I could roll back if I broke something.
 
-## Detections
+## What I tested
 
-| # | Activity | Log source | Wazuh rule | MITRE ATT&CK |
-|---|---|---|---|---|
-| 1 | Repeated wrong-password logons | Windows Security 4625 | 60122 (L5) | T1110.001 Password Guessing (Wazuh mapped T1531) |
-| 2 | File created / modified / deleted in a monitored folder | Wazuh FIM (syscheck) | 554 (L5), 550 (L7), 553 (L7) | T1565.001 Stored Data Manipulation |
-| 3 | Executables written to System32 / Temp | Sysmon Event ID 11 | 92217 (L6) | Investigated, benign |
+### 1. Failed logins
 
-### Detection 1: Failed logons (password guessing)
-- Entered a wrong password 6 times at the login screen for `user1`, about 3 seconds apart, then logged in successfully.
-- Evidence: logonType 2 (interactive), source 127.0.0.1, subStatus `0xc000006a` (valid username, wrong password).
-- Wazuh does not alert on routine successful logons, so I confirmed the follow-up successful logon (4624) directly in the endpoint's Security log, showing the account was accessed after the failures.
-- Wazuh mapped the rule to T1531; based on the behavior I classified it as **T1110.001 Password Guessing**.
-- Compliance tags: PCI DSS 10.2.4/10.2.5, NIST 800-53 AC-7.
+I typed the wrong password six times at the Windows login screen for my test account (`user1`), then logged in correctly.
 
-### Detection 2: File Integrity Monitoring
-- Added `C:\Lab\Sensitive` to Wazuh syscheck with real-time monitoring.
-- Created, modified and deleted `payroll.txt`; each change alerted within seconds.
-- The modification alert showed MD5/SHA-1/SHA-256, size and mtime changes (MD5 `87689b…` → `312b91…`).
-- Compliance tags: PCI DSS 11.5, NIST 800-53 SI-7.
+Wazuh picked up all six failures (Event ID 4625, rule 60122). Looking at the alert details:
 
-### Investigation: Sysmon file-creation alerts (rule 92217)
-- 11 "Executable file dropped in folder commonly used by malware" alerts in two bursts.
-- Burst 1: `MpSigStub.exe` (Microsoft Defender updater) wrote `mpengine.dll` to `C:\Windows\Temp\{GUID}\` right after network connectivity was restored.
-- Burst 2: `SecurityHealthSetup.exe` created a new `SecurityHealthHost.exe` under `System32\SecurityHealth\`.
-- Both ran as NT AUTHORITY\SYSTEM with valid Microsoft Authenticode signatures.
-- **Verdict:** benign true positives (Defender and Windows Security updates). Tuning candidate: allow-list signed Microsoft update processes for this rule.
+- `logonType 2` meant the attempts were made at the keyboard, not over the network.
+- `subStatus 0xc000006a` meant the username was valid and only the password was wrong. If an attacker knows a real username, that's a more targeted attack than one guessing names too.
 
-## Hardening: CIS Benchmark (Wazuh SCA)
-- Wazuh SCA audited the endpoint against the **CIS Microsoft Windows 11 Enterprise Benchmark v3.0.0** (482 checks): baseline **123 passed / 350 failed (26%)**, typical for a default install.
-- Root cause for Detection 1: no account lockout threshold (26006), duration (26005) or reset window (26007), and lockout events not audited (26145).
-- Remediation:
+Wazuh didn't alert on the successful login afterward, which makes sense since normal logins happen all the time. So I checked the Windows Security log directly and found the 4624 success event about five minutes after the failures. In a real case, that sequence would be a sign the account may have been compromised.
+
+One thing I noticed: Wazuh mapped this alert to MITRE T1531 (Account Access Removal). Based on what actually happened, I think T1110.001 (Password Guessing) is the better fit.
+
+### 2. File Integrity Monitoring
+
+I set Wazuh to watch a folder (`C:\Lab\Sensitive`) in real time, then created, edited and deleted a file in it. All three changes alerted within a few seconds:
+
+- 554: file added
+- 550: file modified (the MD5 and SHA-256 hashes changed, along with size and modified time)
+- 553: file deleted
+
+Wazuh tagged the modification alert with PCI DSS 11.5, the requirement that covers change detection on important files.
+
+### 3. Investigating Sysmon alerts I didn't trigger
+
+While I was working, Wazuh raised 11 alerts saying an executable had been dropped in a folder commonly used by malware (rule 92217, from Sysmon Event ID 11). I looked into these:
+
+- The first group came from `MpSigStub.exe` writing `mpengine.dll` into `C:\Windows\Temp`. That's Microsoft Defender updating its engine, and it happened right after my VM's network came back online.
+- The second group came from `SecurityHealthSetup.exe` writing a new version of `SecurityHealthHost.exe` in System32. That's the Windows Security app updating itself.
+
+Both ran as SYSTEM, and I checked that the files had valid Microsoft digital signatures. So these were harmless: the rule fired correctly, but on normal update activity. If I were running this long-term, I'd tune the rule to ignore signed Microsoft updaters.
+
+## Fixing the root cause
+
+Wazuh also runs a CIS benchmark check on endpoints. My Windows VM scored 26% (123 passed, 350 failed out of 482 checks), which is normal for a fresh install.
+
+The failed checks explained my first test: there was no account lockout policy at all, so someone could guess passwords forever, and lockout events weren't being logged either. I fixed both:
 
 ```powershell
 net accounts /lockoutthreshold:5 /lockoutduration:15 /lockoutwindow:15
 auditpol /set /subcategory:"Account Lockout" /failure:enable
 ```
 
-- Re-scan verified all four checks passing (127 passed / 346 failed).
+After a re-scan, those four checks passed (127 passed, 346 failed).
 
-## Troubleshooting
-- **Installer hang / RCU CPU stall warnings:** diagnosed a vCPU scheduling issue on a hybrid Intel CPU; reduced the VM from 4 to 2 vCPUs and reinstalled successfully.
-- **Sysmon channel not collected:** my first config edit silently failed; I verified with `Select-String`, fixed the insertion point in `ossec.conf`, and confirmed via the agent log.
-- **Dashboard unreachable after resume:** `ip a` showed NO-CARRIER on both VMs; restarted the VMware NAT/DHCP services, reconnected the virtual NICs, and resynced the server clock.
-- **Vulnerability detection empty:** the manager log showed the CVE feed download failed with a DNS error during the outage; after restoring connectivity and restarting the manager, the feed updated and a re-scan was triggered.
+## Things that went wrong (and what I learned from them)
 
-## What I Learned
-- The difference between an **event** and an **alert**, and why SIEMs alert only above a severity threshold.
-- How to pivot from an alert to the endpoint's own logs to answer "did the attacker get in?"
-- Not to accept tool MITRE mappings at face value.
-- How FIM uses hash baselines, and why PCI DSS requires it.
-- Detect → find root cause (CIS audit) → remediate → verify is the full security lifecycle.
-- Time sync and network health matter: wrong clocks and dropped NICs directly break investigations.
+- **The Wazuh installer froze.** The console was full of "RCU stall" messages. The VM wasn't getting proper CPU time on my laptop's Intel chip, so I lowered it from 4 vCPUs to 2 and the install finished.
+- **My first config change didn't work.** I added the Sysmon channel with a PowerShell command, but it silently didn't match anything in the file. I only caught it because I checked the agent log instead of assuming it worked.
+- **The dashboard stopped loading after I resumed the VMs.** `ip a` showed the network interface as NO-CARRIER on both VMs. Restarting VMware's NAT and DHCP services and reconnecting the virtual network cards fixed it. I also had to resync the server's clock, which matters because alert timestamps depend on it.
+- **Vulnerability detection showed nothing.** The Wazuh log showed the CVE database download had failed with a DNS error during that same network outage. After the network was back, I restarted the manager and the download completed.
+
+## Takeaways
+
+- Not every event becomes an alert, and that's on purpose. Sometimes you have to go back to the endpoint's logs to get the full story.
+- Tool labels like MITRE mappings are a starting point, not the final answer.
+- Finding something is only half the job. The CIS check helped me fix the actual cause.
+- Small infrastructure problems, like a wrong clock or a dropped network connection, can quietly break an investigation.
 
 ## Screenshots
-_(Upload images to `01-home-soc-lab/screenshots/` and link them here.)_
-- Wazuh dashboard with the active agent
-- Failed logon alerts and expanded 4625 alert
-- FIM alerts (554 / 550 / 553) and the hash change
-- CIS SCA score before and after
-- Sysmon 92217 investigation fields
 
-## Next Steps
-- Active Directory lab: detect Kerberoasting and password spraying
-- Write custom Wazuh rules and tune noisy alerts
+**Windows agent connected to Wazuh**
+
+![Wazuh dashboard with active agent](screenshots/01-dashboard-agent-active.png)
+
+**Failed login alerts (Event ID 4625, rule 60122)**
+
+![Failed login alerts](screenshots/02-failed-logins-60122.png)
+
+![Alert details: target user and substatus](screenshots/04-failed-login-substatus.png)
+
+![Alert details: MITRE and compliance mapping](screenshots/03-failed-login-mitre-details.png)
+
+**File Integrity Monitoring: file added, modified and deleted**
+
+![FIM alerts](screenshots/05-fim-added-modified-deleted.png)
+
+![FIM hash change on modification](screenshots/06-fim-hash-change.png)
+
+**CIS benchmark results (before remediation)**
+
+![CIS benchmark score](screenshots/07-cis-benchmark-score.png)
+
+**Sysmon file-creation alerts I investigated (rule 92217)**
+
+![Sysmon 92217 alerts](screenshots/08-sysmon-92217-alerts.png)
+
+![Sysmon 92217 alert details](screenshots/09-sysmon-92217-details.png)
+
+## What's next
+
+An Active Directory lab, where I'll look at detecting password spraying and Kerberoasting, and writing my own Wazuh rules.
