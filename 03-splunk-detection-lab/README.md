@@ -3,7 +3,7 @@
 ## Why I built this
 My resume had Splunk listed as a skill but nothing to back it up. So I built a small pipeline from scratch — a Windows 11 box forwarding logs to a Splunk server on Ubuntu — and instead of running a canned attack simulation tool, I manually carried out four different attacker techniques myself and wrote my own detections for each one, mapped to MITRE ATT&CK.
 
-This is a companion to my [Wazuh/Sysmon lab](../01-home-soc-lab) — I picked different techniques here on purpose so the two projects don't overlap.
+This is a companion to my [Wazuh/Sysmon lab](https://github.com/akshitaagrawal-CyberSec/cybersecurity-portfolio/tree/main/01-home-soc-lab) — I picked different techniques here on purpose so the two projects don't overlap.
 
 ## Setup
 - Windows 11 Enterprise endpoint running Sysmon (customized SwiftOnSecurity config) + Splunk Universal Forwarder
